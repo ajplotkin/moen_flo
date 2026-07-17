@@ -36,3 +36,24 @@ VALVE_OPEN = "open"
 VALVE_CLOSED = "closed"
 
 MANUFACTURER = "Moen"
+
+# Flo alarm ids that actually mean WATER IS LEAKING (from the /api/v2/alarms catalog).
+# Only these drive the moisture (leak) sensor — every other critical alarm ("Extended
+# Water Use", "Fast Water Flow", "Unusual Activity", "Water System Shutoff", ...) is a
+# real problem but is NOT a leak, and drives the generic alert sensor instead. Mapping
+# every critical to a leak makes HomeKit announce "Leak detected" for a long shower.
+LEAK_ALARM_IDS = {
+    100,  # Leak Detected
+    101,  # Water System Shutoff - Leak Detected
+}
+
+# Leak-natured alarms that Flo raises at *warning* severity. They're real conditions
+# worth surfacing (a slow drip is exactly what leak detection exists for), but they are
+# not "shut the water off now" events, so they drive the generic alert sensor rather
+# than the HomeKit leak alarm.
+LEAK_WARNING_ALARM_IDS = {
+    28,  # Small Drip Detected
+}
+
+# Endpoint for the alarm catalog (id -> display name / severity), fetched once at setup.
+ALARMS_PATH = "/alarms"

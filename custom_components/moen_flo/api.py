@@ -16,6 +16,7 @@ from typing import Any
 import aiohttp
 
 from .const import (
+    ALARMS_PATH,
     API_GW,
     DEFAULT_SLEEP_MINUTES,
     DEFAULT_SLEEP_REVERT,
@@ -201,6 +202,33 @@ class MoenFloApi:
 
     async def async_get_device(self, device_id: str) -> dict[str, Any]:
         return await self._api("GET", f"/devices/{device_id}")
+
+    async def async_get_alarm_catalog(self) -> dict[int, dict[str, Any]]:
+        """Fetch the static alarm catalog: {id: {"name": ..., "severity": ...}}.
+
+        Lets us report *which* alarm is pending by name rather than a bare id, and
+        distinguish real leaks from other critical alarms. Best-effort: an empty map
+        just means attributes fall back to ids.
+        """
+        catalog: dict[int, dict[str, Any]] = {}
+        try:
+            data = await self._api("GET", ALARMS_PATH)
+            items = data.get("items") if isinstance(data, dict) else data
+            for alarm in items or []:
+                if not isinstance(alarm, dict):
+                    continue
+                try:
+                    alarm_id = int(alarm["id"])
+                except (KeyError, TypeError, ValueError):
+                    continue  # skip an unparseable entry, keep the rest
+                catalog[alarm_id] = {
+                    "name": alarm.get("displayName") or alarm.get("name"),
+                    "severity": alarm.get("severity"),
+                }
+        except Exception:  # noqa: BLE001 - cosmetic lookup must never break setup
+            _LOGGER.debug("Could not fetch alarm catalog; continuing without names")
+            return {}
+        return catalog
 
     async def async_get_today_consumption(
         self, mac_address: str, start_iso: str, end_iso: str, tz: str

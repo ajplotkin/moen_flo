@@ -1,11 +1,13 @@
 {
   "domain": "moen_flo",
   "name": "Moen Flo (SSO)",
-  "codeowners": ["@ajplotkin"],
+  "codeowners": [
+    "@ajplotkin"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/ajplotkin/moen_flo",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/ajplotkin/moen_flo/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

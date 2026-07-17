@@ -33,6 +33,7 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.device_id: str | None = None
         self.location_id: str | None = None
         self.mac_address: str | None = None
+        self.alarm_catalog: dict[int, dict[str, Any]] = {}
         self._static: dict[str, Any] = {}
 
     async def _async_setup(self) -> None:
@@ -47,6 +48,13 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "serialNumber": device.get("serialNumber"),
             "fwVersion": device.get("fwVersion"),
         }
+        # Static reference data — fetch once so alarms can be reported by name. Purely
+        # cosmetic: never let it break setup (that would take the valve offline).
+        try:
+            self.alarm_catalog = await self.api.async_get_alarm_catalog()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Alarm catalog unavailable; alarm names will be omitted")
+            self.alarm_catalog = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         if self.device_id is None:

@@ -25,7 +25,8 @@ Creates one device (**Basement Flo**, or your device's nickname) with:
 |---|---|---|
 | Valve | `valve` | Open / close the shutoff valve |
 | Mode | `alarm_control_panel` | Home → armed_home, Away → armed_away, **Off → Sleep** (temporary 2h pause, auto-reverts) |
-| Water alert | `binary_sensor` (moisture) | On when Flo has a pending critical alert (surfaces as a leak in Apple Home) |
+| Leak | `binary_sensor` (moisture) | On **only** for real leak alarms (Flo ids 100/101) → HomeKit LeakSensor |
+| Water alert | `binary_sensor` (problem) | Other pending critical alarms (Extended Water Use, Fast Flow, Unusual Activity, Shutoff…) plus leak-natured warnings (Small Drip). Not bridged to HomeKit — HA renders unknown classes as Occupancy. |
 | Connectivity | `binary_sensor` | Device online/offline |
 | Water flow | `sensor` | gal/min |
 | Water pressure | `sensor` | psi |
