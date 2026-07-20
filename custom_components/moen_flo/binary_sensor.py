@@ -26,7 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import MoenFloConfigEntry
-from .const import LEAK_ALARM_IDS, LEAK_WARNING_ALARM_IDS
+from .const import LEAK_ALARM_IDS
 from .entity import MoenFloEntity
 
 
@@ -111,9 +111,15 @@ class _MoenFloAlarmSensor(MoenFloEntity, BinarySensorEntity):
 
 
 class MoenFloLeakSensor(_MoenFloAlarmSensor):
-    """On only when Flo reports an actual leak (alarm 100/101)."""
+    """On when Flo has ANY pending critical alarm — leak, shutoff, unusual activity.
 
-    _attr_name = "Leak"
+    HomeKit labels this "Leak detected" (it's a moisture sensor — can't change the label).
+    That's imprecise for a non-leak shutoff, but silence is worse: if the Flo shut your
+    water off, you need to know immediately. The `pending_alarms` attribute has the real
+    alarm name for anyone who wants to distinguish.
+    """
+
+    _attr_name = "Water alert"
     _attr_device_class = BinarySensorDeviceClass.MOISTURE
 
     def __init__(self, coordinator) -> None:
@@ -121,20 +127,23 @@ class MoenFloLeakSensor(_MoenFloAlarmSensor):
 
     @property
     def is_on(self) -> bool:
-        return any(
-            a["id"] in LEAK_ALARM_IDS and a["count"] > 0 for a in self._alarms
-        )
+        # Any pending critical fires the sensor. The `isShutoff` alarms (51-53, 55,
+        # 80-89, 101) physically close the valve; the rest (10, 11, 26, 70-74, 100) are
+        # warnings that may or may not lead to a shutoff. All are worth alerting on.
+        if any(self._severity(a) == "critical" and a["count"] > 0 for a in self._alarms):
+            return True
+        # Backstop: if the aggregate says critical but the detail list didn't parse.
+        return (_as_int(_pending(self._device).get("criticalCount"), 0) or 0) > 0
 
 
 class MoenFloAlertSensor(_MoenFloAlarmSensor):
-    """On for pending non-leak critical alarms and leak-natured warnings.
+    """On for any pending warning-level alarm (e.g. Small Drip, Low Water Pressure).
 
-    The old Homebridge plugin's generic "triggered" equivalent. Deliberately NOT exposed
-    to HomeKit: HA's bridge has no mapping for `problem` and would render it as an
-    Occupancy sensor.
+    HA-only (device_class problem → HomeKit can't render it usefully). Critical alarms
+    are handled by the moisture sensor above, which reaches HomeKit.
     """
 
-    _attr_name = "Water alert"
+    _attr_name = "Warning"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def __init__(self, coordinator) -> None:
@@ -142,21 +151,9 @@ class MoenFloAlertSensor(_MoenFloAlarmSensor):
 
     @property
     def is_on(self) -> bool:
-        alarms = self._alarms
-        for alarm in alarms:
-            if alarm["count"] <= 0:
-                continue
-            if alarm["id"] in LEAK_ALARM_IDS:
-                continue  # the leak sensor owns these
-            if self._severity(alarm) == "critical" or alarm["id"] in LEAK_WARNING_ALARM_IDS:
-                return True
-        # Backstop: if the aggregate says something critical is pending but the detailed
-        # list didn't parse into anything, still surface "something is wrong" rather than
-        # going silent. (Leaks intentionally get no such fallback — it can't tell a leak
-        # from a long shower, which is the bug this whole split exists to fix.)
-        if not any(self._severity(a) == "critical" for a in alarms):
-            return (_as_int(_pending(self._device).get("criticalCount"), 0) or 0) > 0
-        return False
+        return any(
+            self._severity(a) == "warning" and a["count"] > 0 for a in self._alarms
+        )
 
 
 class MoenFloConnectivitySensor(MoenFloEntity, BinarySensorEntity):
