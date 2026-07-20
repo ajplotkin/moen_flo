@@ -39,6 +39,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             MoenFloShutoffSensor(coordinator),
+            MoenFloLeakSensor(coordinator),
             MoenFloAlertSensor(coordinator),
             MoenFloConnectivitySensor(coordinator),
         ]
@@ -129,6 +130,22 @@ class MoenFloShutoffSensor(_MoenFloAlarmSensor):
         if any(self._severity(a) == "critical" and a["count"] > 0 for a in self._alarms):
             return True
         return (_as_int(_pending(self._device).get("criticalCount"), 0) or 0) > 0
+
+
+class MoenFloLeakSensor(_MoenFloAlarmSensor):
+    """On only for actual leak alarms (100/101). HomeKit says "Leak Detected" — accurate."""
+
+    _attr_name = "Leak"
+    _attr_device_class = BinarySensorDeviceClass.MOISTURE
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "actual_leak")
+
+    @property
+    def is_on(self) -> bool:
+        return any(
+            a["id"] in LEAK_ALARM_IDS and a["count"] > 0 for a in self._alarms
+        )
 
 
 class MoenFloAlertSensor(_MoenFloAlarmSensor):
