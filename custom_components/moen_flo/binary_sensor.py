@@ -38,7 +38,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     async_add_entities(
         [
-            MoenFloLeakSensor(coordinator),
+            MoenFloShutoffSensor(coordinator),
             MoenFloAlertSensor(coordinator),
             MoenFloConnectivitySensor(coordinator),
         ]
@@ -110,29 +110,24 @@ class _MoenFloAlarmSensor(MoenFloEntity, BinarySensorEntity):
         return {"pending_alarms": [self._describe(a) for a in self._alarms]}
 
 
-class MoenFloLeakSensor(_MoenFloAlarmSensor):
+class MoenFloShutoffSensor(_MoenFloAlarmSensor):
     """On when Flo has ANY pending critical alarm — leak, shutoff, unusual activity.
 
-    HomeKit labels this "Leak detected" (it's a moisture sensor — can't change the label).
-    That's imprecise for a non-leak shutoff, but silence is worse: if the Flo shut your
-    water off, you need to know immediately. The `pending_alarms` attribute has the real
-    alarm name for anyone who wants to distinguish.
+    Uses device_class OPENING so HomeKit renders it as a contact sensor. The notification
+    reads "Water Shutoff: Open" (= a shutoff condition is active) rather than the
+    misleading "Leak Detected" a moisture sensor would produce for non-leak shutoffs.
     """
 
-    _attr_name = "Water alert"
-    _attr_device_class = BinarySensorDeviceClass.MOISTURE
+    _attr_name = "Water Shutoff"
+    _attr_device_class = BinarySensorDeviceClass.OPENING
 
     def __init__(self, coordinator) -> None:
         super().__init__(coordinator, "leak")
 
     @property
     def is_on(self) -> bool:
-        # Any pending critical fires the sensor. The `isShutoff` alarms (51-53, 55,
-        # 80-89, 101) physically close the valve; the rest (10, 11, 26, 70-74, 100) are
-        # warnings that may or may not lead to a shutoff. All are worth alerting on.
         if any(self._severity(a) == "critical" and a["count"] > 0 for a in self._alarms):
             return True
-        # Backstop: if the aggregate says critical but the detail list didn't parse.
         return (_as_int(_pending(self._device).get("criticalCount"), 0) or 0) > 0
 
 
