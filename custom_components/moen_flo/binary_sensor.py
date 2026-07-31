@@ -26,6 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import MoenFloConfigEntry
+from .alarms import as_int, describe, pending, pending_alarms, severity_of
 from .const import LEAK_ALARM_IDS
 from .entity import MoenFloEntity
 
@@ -46,63 +47,18 @@ async def async_setup_entry(
     )
 
 
-def _pending(device: dict[str, Any]) -> dict[str, Any]:
-    return (device.get("notifications") or {}).get("pending") or {}
-
-
-def _as_int(value: Any, default: int | None = None) -> int | None:
-    """Coerce an id/count to int. The API sends ints, but a string would otherwise
-    silently break `id in LEAK_ALARM_IDS` — an unobservable permanent false negative."""
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _pending_alarms(device: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalized pending alarms: [{"id": int|None, "severity": str|None, "count": int}]."""
-    raw = _pending(device).get("alarmCount")
-    if not isinstance(raw, list):
-        return []
-    alarms: list[dict[str, Any]] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        alarms.append(
-            {
-                "id": _as_int(entry.get("id")),
-                "severity": entry.get("severity"),
-                # An entry present in the pending list is itself the signal; default to 1
-                # rather than 0 so an unexpected shape errs toward alerting.
-                "count": _as_int(entry.get("count"), 1) or 0,
-            }
-        )
-    return alarms
-
-
 class _MoenFloAlarmSensor(MoenFloEntity, BinarySensorEntity):
     """Shared alarm parsing + attributes."""
 
     @property
     def _alarms(self) -> list[dict[str, Any]]:
-        return _pending_alarms(self._device)
+        return pending_alarms(self._device)
 
     def _severity(self, alarm: dict[str, Any]) -> str | None:
-        """Per-entry severity, falling back to the catalog so both is_on and the
-        attributes agree on what 'critical' means."""
-        catalog = self.coordinator.alarm_catalog.get(alarm.get("id")) or {}
-        return alarm.get("severity") or catalog.get("severity")
+        return severity_of(alarm, self.coordinator.alarm_catalog)
 
     def _describe(self, alarm: dict[str, Any]) -> dict[str, Any]:
-        catalog = self.coordinator.alarm_catalog.get(alarm.get("id")) or {}
-        return {
-            "id": alarm.get("id"),
-            "name": catalog.get("name"),
-            "severity": self._severity(alarm),
-            "count": alarm.get("count"),
-        }
+        return describe(alarm, self.coordinator.alarm_catalog)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -129,7 +85,7 @@ class MoenFloShutoffSensor(_MoenFloAlarmSensor):
     def is_on(self) -> bool:
         if any(self._severity(a) == "critical" and a["count"] > 0 for a in self._alarms):
             return True
-        return (_as_int(_pending(self._device).get("criticalCount"), 0) or 0) > 0
+        return (as_int(pending(self._device).get("criticalCount"), 0) or 0) > 0
 
 
 class MoenFloLeakSensor(_MoenFloAlarmSensor):

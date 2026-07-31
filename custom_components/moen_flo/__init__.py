@@ -15,6 +15,7 @@ PLATFORMS: list[Platform] = [
     Platform.VALVE,
     Platform.ALARM_CONTROL_PANEL,
     Platform.BINARY_SENSOR,
+    Platform.EVENT,
     Platform.SENSOR,
 ]
 

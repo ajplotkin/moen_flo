@@ -33,8 +33,32 @@ Creates one device (**Basement Flo**, or your device's nickname) with:
 | Water temperature | `sensor` | °F (diagnostic; reads oddly at zero flow) |
 | Wi-Fi signal | `sensor` | dBm (diagnostic, disabled by default) |
 | Water used today | `sensor` | gallons |
+| Alarm | `event` | Fires once per **newly raised** alarm — types `leak` / `critical` / `warning` / `info`, with the alarm id, name and severity in the payload. See below. |
 
 Cloud-polled every 30s. Token auto-refreshes; a changed password triggers HA's reauth flow.
+
+### Why there's an `event` entity as well as the binary sensors
+
+The binary sensors are *level*-triggered over Flo's pending-alarm queue: they answer "is
+something wrong right now?". That queue only drains when alarms are dismissed in the Flo
+app, so an outstanding alarm latches them `on` indefinitely — and while latched, a brand
+new alarm produces **no state change at all**, so nothing notifies.
+
+This is not hypothetical. With four alarms pending since 2026-07-28, a real "Water System
+Shutoff" on 2026-07-31 raised no Home Assistant signal whatsoever (the valve closed and
+reopened, confirmed in history) while the Flo app notified normally — its cloud pushes
+each occurrence independently of any state.
+
+The `event` entity reports *occurrences* instead, firing whenever an alarm appears that
+wasn't there before or whose count changes, regardless of what else is outstanding.
+
+**It does not reach HomeKit.** Home Assistant's HomeKit bridge has no mapping for the
+`event` domain — event entities are bridged only as linked doorbell/motion sensors on
+cameras and locks, so a standalone one is silently skipped. Use it for HA automations; a
+HomeKit announcement still needs an automation or a momentary binary sensor.
+
+Known limitation: because this is polled every 30s, an alarm that clears and re-fires at
+the *identical* count inside one polling window is indistinguishable from no change.
 
 ## Install
 
