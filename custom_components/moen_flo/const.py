@@ -11,8 +11,12 @@ DOMAIN = "moen_flo"
 OAUTH_URL = "https://4j1gkf0vji.execute-api.us-east-2.amazonaws.com/prod/v1/oauth2/token"
 OAUTH_CLIENT_ID = "6qn9pep31dglq6ed4fvlq6rp5t"
 
-# Flo data/control plane. Accepts EITHER the SSO access token or a legacy v1
-# users/auth token (re-verified 2026-08-19); this client sends the SSO one.
+# Flo data/control plane. GETs accept EITHER auth, but the HEADER FORM DIFFERS and
+# is not interchangeable (measured 2026-08-20 on GET /api/v2/users/{id}):
+#     SSO access token   -> "Authorization: Bearer <tok>"   200
+#     legacy v1 token    -> "Authorization: <tok>"          200
+#     legacy v1 as Bearer                                   401
+# Writes were NOT tested with a legacy token. This client sends the SSO one.
 API_GW = "https://api-gw.meetflo.com/api/v2"
 
 USER_AGENT = "Smartwater-iOS-prod-3.45.0"

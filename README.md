@@ -5,17 +5,26 @@ valve**, authenticating the way the current Moen app does (Moen SSO / Cognito).
 
 ## Why this exists
 
-Moen migrated Flo accounts to the **Smart Water Network** identity. As a result,
-`api-gw.meetflo.com` now authenticates with a **Moen SSO (Cognito) access token** and
-**rejects the legacy Flo `api/v1/users/auth` token with `401`**. Everything that logs
-in the old way — the built-in Home Assistant `flo` integration (via `aioflo`), the
-`homebridge-flobymoen` plugin, etc. — therefore fails to authenticate for migrated
-accounts. This integration logs in with your Moen email + password against
-`oauth2/token` and uses the Cognito token for all Flo calls, so it keeps working.
+Moen migrated Flo accounts to the **Smart Water Network** identity, and the current Moen
+app authenticates against Moen SSO (Cognito). This integration does the same: it logs in
+with your Moen email + password against `oauth2/token` and uses the Cognito token for all
+Flo calls.
 
-The valve itself is still controlled through the (very much alive) legacy Flo v2 data
-plane: `POST /api/v2/devices/<id> {"valve":{"target":"open"|"closed"}}`. Only the
-**auth** changed.
+> **Corrected 2026-08-20.** This section previously said `api-gw.meetflo.com` **rejects**
+> the legacy `api/v1/users/auth` token with a `401`, and that the built-in Home Assistant
+> `flo` integration therefore fails for migrated accounts. **That is not true today.**
+> Re-tested on 2026-08-20 against a migrated account: `POST /api/v1/users/auth` returns
+> 200 and its token is accepted by `api-gw` — 200 on `GET /api/v2/users/{id}` and
+> `GET /api/v2/devices/{id}`. Whether something changed at Moen or the credential state
+> differed when this was first written, I can't say. If the stock `flo` integration fails
+> for you, see [home-assistant/core#171600](https://github.com/home-assistant/core/issues/171600) —
+> the reports there mostly resolve to a locked account or a password reset after migration.
+
+So this integration is not a workaround for a broken endpoint. It uses SSO because that is
+what the current app uses and the flow most likely to outlive v1.
+
+The valve is controlled through the Flo v2 data plane, which is very much alive:
+`POST /api/v2/devices/<id> {"valve":{"target":"open"|"closed"}}`.
 
 ## Features
 
