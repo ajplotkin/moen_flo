@@ -187,3 +187,110 @@ async def test_async_validate_reports_the_mode(aresponses, legacy_ok):
     async with aiohttp.ClientSession() as session:
         api = MoenFloApi(session, USERNAME, PASSWORD)
         assert await api.async_validate() == const_mod.AUTH_MODE_LEGACY
+
+
+@pytest.mark.asyncio
+async def test_non_auth_sso_failure_on_refresh_falls_back(aresponses, sso_ok, legacy_ok):
+    """A 5xx/timeout on the SSO refresh must fall back, not propagate.
+
+    Regression test: _refresh originally caught only MoenFloAuthError, so a running
+    instance hitting a 503 (or DNS failure, or timeout) on renewal raised every poll,
+    never reached _login, and therefore never reached the legacy endpoint — leaving
+    the valve unavailable until Home Assistant restarted. That is exactly the outage
+    class the fallback exists for.
+    """
+    aresponses.add(SSO_HOST, SSO_PATH, "post", _ok(aresponses, sso_ok))
+    # Renewal: the refresh grant AND the full SSO login both fail non-authly.
+    aresponses.add(SSO_HOST, SSO_PATH, "post", aresponses.Response(text="down", status=503))
+    aresponses.add(SSO_HOST, SSO_PATH, "post", aresponses.Response(text="down", status=503))
+    aresponses.add(LEGACY_HOST, LEGACY_PATH, "post", _ok(aresponses, legacy_ok))
+
+    async with aiohttp.ClientSession() as session:
+        api = MoenFloApi(session, USERNAME, PASSWORD)
+        await api._login()
+        assert api.auth_mode == const_mod.AUTH_MODE_SSO
+        api._expires_at = 0
+        await api._ensure_token()
+        assert api.auth_mode == const_mod.AUTH_MODE_LEGACY
+        assert api._access_token == LEGACY_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_sso_login_uses_the_shorter_timeout(aresponses, sso_ok):
+    """The SSO leg of a login uses SSO_LOGIN_TIMEOUT, not REQUEST_TIMEOUT.
+
+    Both legs run holding the token lock, so a dead SSO endpoint would otherwise
+    block every in-flight call for the full request timeout twice over.
+    """
+    seen = {}
+    real_timeout = api_mod.asyncio.timeout
+
+    def spy(delay):
+        seen.setdefault("first", delay)
+        return real_timeout(delay)
+
+    aresponses.add(SSO_HOST, SSO_PATH, "post", _ok(aresponses, sso_ok))
+    api_mod.asyncio.timeout = spy
+    try:
+        async with aiohttp.ClientSession() as session:
+            api = MoenFloApi(session, USERNAME, PASSWORD)
+            await api._login()
+    finally:
+        api_mod.asyncio.timeout = real_timeout
+
+    assert seen["first"] == const_mod.SSO_LOGIN_TIMEOUT
+    assert seen["first"] != const_mod.REQUEST_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_short_legacy_expiry_is_floored(aresponses):
+    """A nonsense/short legacy expiry must not produce an already-expired token."""
+    aresponses.add(SSO_HOST, SSO_PATH, "post", aresponses.Response(text=None, status=503))
+    aresponses.add(LEGACY_HOST, LEGACY_PATH, "post", _ok(aresponses, {
+        "token": LEGACY_TOKEN,
+        "tokenPayload": {"user": {"user_id": "u-1"}, "timestamp": round(time.time()) - 100},
+        "tokenExpiration": 1,
+    }))
+
+    async with aiohttp.ClientSession() as session:
+        api = MoenFloApi(session, USERNAME, PASSWORD)
+        await api._login()
+        # Floor (120) minus margin (60) => at least 60s of validity, never negative.
+        assert api._expires_at - time.monotonic() >= 55
+
+
+@pytest.mark.asyncio
+async def test_sso_expiry_carries_the_margin(aresponses):
+    """The SSO expiry is held back so a request in flight cannot race it."""
+    aresponses.add(SSO_HOST, SSO_PATH, "post", _ok(aresponses, {
+        "token": {"access_token": SSO_TOKEN, "expires_in": 3600}
+    }))
+    async with aiohttp.ClientSession() as session:
+        api = MoenFloApi(session, USERNAME, PASSWORD)
+        await api._login()
+        remaining = api._expires_at - time.monotonic()
+        assert 3400 < remaining < 3600 - 30, remaining
+
+
+@pytest.mark.asyncio
+async def test_sso_token_without_expires_in_gets_a_usable_default(aresponses):
+    """A response omitting expires_in must not store an already-expired token."""
+    aresponses.add(SSO_HOST, SSO_PATH, "post",
+                   _ok(aresponses, {"token": {"access_token": SSO_TOKEN}}))
+    async with aiohttp.ClientSession() as session:
+        api = MoenFloApi(session, USERNAME, PASSWORD)
+        await api._login()
+        assert api._expires_at - time.monotonic() > 600
+
+
+@pytest.mark.asyncio
+async def test_force_refresh_skips_when_another_task_rotated(aresponses, sso_ok):
+    """A 401 handler must not re-refresh a token someone else already replaced."""
+    aresponses.add(SSO_HOST, SSO_PATH, "post", _ok(aresponses, sso_ok))
+    async with aiohttp.ClientSession() as session:
+        api = MoenFloApi(session, USERNAME, PASSWORD)
+        await api._login()
+        # Pretend another task rotated the token while we held a stale snapshot.
+        stale = ("some-older-token", const_mod.AUTH_MODE_SSO)
+        await api._force_refresh(stale)   # no HTTP registered: must not call out
+        assert api._access_token == SSO_TOKEN

@@ -68,3 +68,61 @@ def legacy_ok():
         "tokenPayload": {"user": {"user_id": "u-1"}, "timestamp": now},
         "tokenExpiration": 86400,
     }
+
+
+def load_coordinator():
+    """Load coordinator.py with Home Assistant stubbed out.
+
+    The repair-issue logic is the whole visibility mechanism for the legacy fallback,
+    so it needs tests — but pulling in Home Assistant just to exercise a counter and
+    two registry calls is not worth it. Only the handful of names coordinator.py
+    imports are stubbed; the module's own code runs unmodified.
+    """
+    import sys
+    import types
+
+    issues = {}
+
+    def _mk(name, **attrs):
+        m = types.ModuleType(name)
+        for k, v in attrs.items():
+            setattr(m, k, v)
+        sys.modules[name] = m
+        return m
+
+    class _Sev:
+        WARNING = "warning"
+
+    def _create(hass, domain, issue_id, **kw):
+        issues[(domain, issue_id)] = kw
+
+    def _delete(hass, domain, issue_id):
+        issues.pop((domain, issue_id), None)
+
+    ir = _mk("homeassistant.helpers.issue_registry",
+             async_create_issue=_create, async_delete_issue=_delete, IssueSeverity=_Sev)
+
+    class _DUC:
+        # coordinator.py subscripts this (DataUpdateCoordinator[dict[str, Any]]),
+        # so the stub has to accept it.
+        def __init__(self, *a, **kw):
+            pass
+
+        def __class_getitem__(cls, _item):
+            return cls
+
+    _mk("homeassistant", helpers=None)
+    _mk("homeassistant.config_entries", ConfigEntry=object)
+    _mk("homeassistant.core", HomeAssistant=object)
+    _mk("homeassistant.exceptions", ConfigEntryAuthFailed=type("ConfigEntryAuthFailed", (Exception,), {}))
+    _mk("homeassistant.helpers", issue_registry=ir)
+    _mk("homeassistant.helpers.update_coordinator", DataUpdateCoordinator=_DUC,
+        UpdateFailed=type("UpdateFailed", (Exception,), {}))
+    _mk("homeassistant.util", dt=types.SimpleNamespace(now=lambda: None, as_utc=lambda x: x, utcnow=lambda: None))
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("moen_flo_std.coordinator", COMPONENT / "coordinator.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["moen_flo_std.coordinator"] = mod
+    spec.loader.exec_module(mod)
+    return mod, issues

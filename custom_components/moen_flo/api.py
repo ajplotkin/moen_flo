@@ -143,7 +143,13 @@ class MoenFloApi:
                 auth=False,
             )
             self._store_token(data)
-        except MoenFloAuthError:
+        except (MoenFloAuthError, MoenFloError):
+            # MoenFloError as well as MoenFloAuthError: a refresh that fails with a
+            # 5xx, a timeout or a DNS failure is exactly the SSO outage this fallback
+            # exists for. Catching only the auth flavour meant a running instance
+            # propagated the error every poll, never reached _login (and therefore
+            # never reached the legacy endpoint), and left the valve unavailable until
+            # Home Assistant restarted.
             await self._login()
 
     def _store_token(self, data: dict[str, Any]) -> None:

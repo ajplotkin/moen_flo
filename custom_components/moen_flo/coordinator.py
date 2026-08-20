@@ -67,9 +67,13 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.alarm_catalog = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
-        if self.device_id is None:
-            await self._async_setup()
         try:
+            # Discovery is inside the try too: an auth failure here must still become
+            # ConfigEntryAuthFailed. Outside it, a revoked password that first showed
+            # up during discovery escaped as MoenFloAuthError, which the coordinator
+            # treats as an unexpected error -- endless retries and no reauth prompt.
+            if self.device_id is None:
+                await self._async_setup()
             device = await self.api.async_get_device(self.device_id)
         except MoenFloAuthError as err:
             # Stored password no longer works -> prompt the user to re-auth.
@@ -121,6 +125,9 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
             return
 
-        if self._legacy_polls:
-            self._legacy_polls = 0
-            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_LEGACY_AUTH)
+        # Delete unconditionally rather than only when this instance counted legacy
+        # polls. _legacy_polls is per-instance, so after a config-entry reload -- which
+        # is exactly what the reauth flow does -- a stale issue raised by the previous
+        # instance would never be cleared. async_delete_issue is idempotent.
+        self._legacy_polls = 0
+        ir.async_delete_issue(self.hass, DOMAIN, ISSUE_LEGACY_AUTH)

@@ -14,7 +14,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import MoenFloApi, MoenFloAuthError, MoenFloError
-from .const import DOMAIN
+from .const import AUTH_MODE_LEGACY, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +28,16 @@ async def _validate(hass, username: str, password: str) -> str | None:
     """Return an error key, or None if the credentials work."""
     api = MoenFloApi(async_get_clientsession(hass), username, password)
     try:
-        await api.async_validate()
+        mode = await api.async_validate()
+        if mode == AUTH_MODE_LEGACY:
+            # Setup completed during an SSO outage. The coordinator raises a repair
+            # issue once it is polling, but say so here too: otherwise this looks
+            # identical to a normal setup and the entry silently starts on the
+            # fallback flow.
+            _LOGGER.warning(
+                "Set up using the legacy Flo login because Moen SSO sign-in failed. "
+                "SSO is retried on every token renewal"
+            )
         await api.async_discover_valve()
     except MoenFloAuthError:
         return "invalid_auth"
