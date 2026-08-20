@@ -8,11 +8,18 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .api import MoenFloApi, MoenFloAuthError, MoenFloError
-from .const import DOMAIN, SCAN_INTERVAL
+from .const import (
+    AUTH_MODE_LEGACY,
+    DOMAIN,
+    ISSUE_LEGACY_AUTH,
+    LEGACY_AUTH_ISSUE_AFTER,
+    SCAN_INTERVAL,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +35,9 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=SCAN_INTERVAL,
             config_entry=entry,
         )
+        # Consecutive polls seen running on the legacy login. Debounces the repair
+        # issue so a transient SSO failure does not flap it on and off.
+        self._legacy_polls = 0
         self.entry = entry
         self.api = api
         self.device_id: str | None = None
@@ -82,9 +92,35 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 tz_name,
             )
 
+        self._check_auth_mode()
+
         return {
             "device": device,
             "consumption_today": consumption,
             "static": {**self._static, "deviceModel": device.get("deviceModel", self._static.get("deviceModel")),
                        "fwVersion": device.get("fwVersion", self._static.get("fwVersion"))},
         }
+
+    def _check_auth_mode(self) -> None:
+        """Surface a fallback to the legacy login as a repair issue.
+
+        Without this the switch is a log line nobody reads, and the integration would
+        keep working on a flow that exists only as a backstop -- exactly the state you
+        want to know about before the legacy endpoint is retired too.
+        """
+        if self.api.auth_mode == AUTH_MODE_LEGACY:
+            self._legacy_polls += 1
+            if self._legacy_polls == LEGACY_AUTH_ISSUE_AFTER:
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    ISSUE_LEGACY_AUTH,
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key=ISSUE_LEGACY_AUTH,
+                )
+            return
+
+        if self._legacy_polls:
+            self._legacy_polls = 0
+            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_LEGACY_AUTH)

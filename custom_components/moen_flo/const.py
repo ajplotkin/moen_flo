@@ -11,6 +11,26 @@ DOMAIN = "moen_flo"
 OAUTH_URL = "https://4j1gkf0vji.execute-api.us-east-2.amazonaws.com/prod/v1/oauth2/token"
 OAUTH_CLIENT_ID = "6qn9pep31dglq6ed4fvlq6rp5t"
 
+# Legacy Flo login, used only as a fallback when the SSO endpoint above fails.
+# OAUTH_URL is a raw API Gateway host and OAUTH_CLIENT_ID is scraped from the app, so
+# either can change without notice; this is the second way in when that happens.
+LEGACY_AUTH_URL = "https://api.meetflo.com/api/v1/users/auth"
+
+# The SSO attempt of a fallback login gets a shorter timeout than a normal request:
+# both legs run while holding the token lock, so a dead SSO endpoint would otherwise
+# block every in-flight call for REQUEST_TIMEOUT twice over.
+SSO_LOGIN_TIMEOUT = 8
+
+AUTH_MODE_SSO = "sso"
+AUTH_MODE_LEGACY = "legacy"
+
+# A repair issue is raised when the integration has fallen back to the legacy login,
+# so the switch is visible in Settings > Repairs rather than only in the log. Requires
+# this many consecutive legacy polls first: a single SSO blip heals on the next token
+# cycle and should not raise and clear an issue each time.
+ISSUE_LEGACY_AUTH = "using_legacy_auth"
+LEGACY_AUTH_ISSUE_AFTER = 3
+
 # Flo data/control plane. GETs accept EITHER auth, but the HEADER FORM DIFFERS and
 # is not interchangeable (measured 2026-08-20 on GET /api/v2/users/{id}):
 #     SSO access token   -> "Authorization: Bearer <tok>"   200

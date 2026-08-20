@@ -25,14 +25,18 @@ import aiohttp
 from .const import (
     ALARMS_PATH,
     API_GW,
+    AUTH_MODE_LEGACY,
+    AUTH_MODE_SSO,
     DEFAULT_SLEEP_MINUTES,
     DEFAULT_SLEEP_REVERT,
     FLO_DEVICE_TYPES,
+    LEGACY_AUTH_URL,
     MODE_SLEEP,
     OAUTH_CLIENT_ID,
     OAUTH_URL,
     REQUEST_TIMEOUT,
     SLEEP_MINUTE_OPTIONS,
+    SSO_LOGIN_TIMEOUT,
     SYSTEM_MODES,
     USER_AGENT,
     VALVE_CLOSED,
@@ -61,26 +65,71 @@ class MoenFloApi:
         self._password = password
         self._access_token: str | None = None
         self._refresh_token: str | None = None
+        # Which flow produced _access_token. It decides the Authorization header form
+        # and is therefore only meaningful TOGETHER with the token -- see _api().
+        self._auth_mode: str = AUTH_MODE_SSO
         self._expires_at: float = 0.0
         self._token_lock = asyncio.Lock()
 
     # ---- auth ------------------------------------------------------------- #
     async def _login(self) -> None:
-        """Full password login against Moen oauth2/token."""
+        """Log in, preferring Moen SSO and falling back to the legacy Flo flow.
+
+        SSO is tried first on every login, including while already running in legacy
+        mode, so a transient SSO outage heals itself on the next token cycle rather
+        than pinning the integration to the legacy flow until a restart.
+        """
+        try:
+            data = await self._raw_post(
+                OAUTH_URL,
+                {
+                    "username": self._username,
+                    "password": self._password,
+                    "client_id": OAUTH_CLIENT_ID,
+                },
+                auth=False,
+                timeout=SSO_LOGIN_TIMEOUT,
+            )
+            # Inside the try on purpose: a 200 carrying no access token (an OTP
+            # challenge) is an SSO-side obstacle like any other, so it falls back
+            # rather than failing setup. The repair issue is what stops that being
+            # a silent downgrade.
+            self._store_token(data)
+        except (MoenFloAuthError, MoenFloError) as sso_err:
+            _LOGGER.warning(
+                "Moen SSO login failed (%s); trying the legacy Flo login. The SSO "
+                "endpoint and client id are undocumented and can change without notice",
+                sso_err,
+            )
+            try:
+                await self._legacy_login()
+            except (MoenFloAuthError, MoenFloError) as legacy_err:
+                # Both failed. If SSO failed on credentials, that is the useful error:
+                # raising the legacy one could report a network problem for a bad
+                # password, which the config flow turns into "cannot connect".
+                if isinstance(sso_err, MoenFloAuthError):
+                    raise sso_err
+                raise legacy_err from sso_err
+            _LOGGER.warning(
+                "Authenticated with the legacy Flo login instead of Moen SSO"
+            )
+
+    async def _legacy_login(self) -> None:
+        """Password login against the legacy Flo v1 endpoint."""
         data = await self._raw_post(
-            OAUTH_URL,
-            {
-                "username": self._username,
-                "password": self._password,
-                "client_id": OAUTH_CLIENT_ID,
-            },
+            LEGACY_AUTH_URL,
+            {"username": self._username, "password": self._password},
             auth=False,
         )
-        self._store_token(data)
+        self._store_legacy_token(data)
 
     async def _refresh(self) -> None:
-        """Refresh via refresh_token; fall back to full login."""
-        if not self._refresh_token:
+        """Refresh via refresh_token; fall back to full login.
+
+        The legacy flow issues no refresh token, so legacy mode always re-logs in --
+        which is also what gives SSO a chance to come back (see _login).
+        """
+        if self._auth_mode == AUTH_MODE_LEGACY or not self._refresh_token:
             await self._login()
             return
         try:
@@ -104,10 +153,42 @@ class MoenFloApi:
             raise MoenFloAuthError(
                 "Login returned no access token (possible OTP challenge)."
             )
+        # Token and mode are written together; nothing may observe one without the
+        # other, because the mode decides the header form.
         self._access_token = access
+        self._auth_mode = AUTH_MODE_SSO
         # refresh token may be absent on a refresh-grant response; keep the old one
         self._refresh_token = token.get("refresh_token", self._refresh_token)
         self._expires_at = time.monotonic() + int(token.get("expires_in", 3600)) - 60
+
+    def _store_legacy_token(self, data: dict[str, Any]) -> None:
+        """Record a legacy Flo token.
+
+        The legacy response is shaped differently from the SSO one in two ways that
+        both bite: "token" is the JWT STRING rather than an object (so the SSO path's
+        data["token"]["access_token"] raises AttributeError on it), and the expiry is
+        an ABSOLUTE epoch pair. _expires_at is monotonic-based, so the epoch has to be
+        converted to a duration first -- writing the epoch straight in would make the
+        token look valid for decades and it would never be refreshed.
+        """
+        token = data.get("token")
+        if not isinstance(token, str) or not token:
+            raise MoenFloAuthError("Legacy login returned no token.")
+
+        payload = data.get("tokenPayload") or {}
+        issued = payload.get("timestamp")
+        lifetime = data.get("tokenExpiration")
+        if isinstance(issued, (int, float)) and isinstance(lifetime, (int, float)):
+            remaining = (float(issued) + float(lifetime)) - time.time()
+        else:
+            remaining = 3600.0
+        # Never trust the server into the past, and always keep the 60s margin.
+        remaining = max(remaining, 120.0)
+
+        self._access_token = token
+        self._auth_mode = AUTH_MODE_LEGACY
+        self._refresh_token = None
+        self._expires_at = time.monotonic() + remaining - 60
 
     async def _ensure_token(self) -> None:
         if self._access_token is not None and time.monotonic() < self._expires_at:
@@ -121,24 +202,54 @@ class MoenFloApi:
             else:
                 await self._refresh()
 
-    async def _force_refresh(self, stale_token: str | None) -> None:
-        """Refresh after a 401, skipping if another task already rotated the token."""
+    async def _force_refresh(self, stale: tuple[str | None, str]) -> None:
+        """Refresh after a 401, skipping if another task already rotated the token.
+
+        The comparison is on (token, mode) rather than the token alone: a fallback can
+        change the header form, and a caller that read the pair before that happened
+        must not suppress the refresh just because the token string still matches.
+        """
         async with self._token_lock:
-            if self._access_token != stale_token:
+            if (self._access_token, self._auth_mode) != stale:
                 return
             await self._refresh()
 
-    async def async_validate(self) -> None:
-        """Used by the config flow: confirm credentials work."""
+    def _auth_header(self) -> str:
+        """Authorization value for the current mode.
+
+        The two token types are NOT interchangeable here. Measured 2026-08-20 against
+        GET api-gw /api/v2/users/{id}: the SSO access token must be sent as
+        "Bearer <tok>" (200), while the legacy token must be sent raw (200) and gets a
+        401 if sent as a Bearer. Getting this wrong 401s every call, which the
+        coordinator turns into a reauth prompt that then "succeeds" and loops.
+        """
+        if self._auth_mode == AUTH_MODE_LEGACY:
+            return self._access_token or ""
+        return f"Bearer {self._access_token}"
+
+    @property
+    def auth_mode(self) -> str:
+        """Which flow produced the current token."""
+        return self._auth_mode
+
+    async def async_validate(self) -> str:
+        """Used by the config flow: confirm credentials work.
+
+        Returns the auth mode that succeeded, so a setup completed during an SSO
+        outage does not silently look identical to a normal one.
+        """
         await self._login()
+        return self._auth_mode
 
     # ---- HTTP ------------------------------------------------------------- #
-    async def _raw_post(self, url: str, body: dict, *, auth: bool) -> dict[str, Any]:
+    async def _raw_post(
+        self, url: str, body: dict, *, auth: bool, timeout: int | None = None
+    ) -> dict[str, Any]:
         headers = {"Content-Type": "application/json;charset=UTF-8", "User-Agent": USER_AGENT}
         if auth:
-            headers["Authorization"] = f"Bearer {self._access_token}"
+            headers["Authorization"] = self._auth_header()
         try:
-            async with asyncio.timeout(REQUEST_TIMEOUT):
+            async with asyncio.timeout(timeout or REQUEST_TIMEOUT):
                 resp = await self._session.post(url, json=body, headers=headers)
                 if resp.status in (401, 403):
                     raise MoenFloAuthError(f"{resp.status}: {await resp.text()}")
@@ -156,9 +267,12 @@ class MoenFloApi:
         await self._ensure_token()
         url = f"{API_GW}{path}"
         for attempt in (1, 2):
-            used_token = self._access_token
+            # Read token and mode in ONE statement. There is no await between them,
+            # so asyncio cannot interleave a fallback that changes the header form
+            # and leave us sending an SSO token raw (or a legacy token as a Bearer).
+            used = (self._access_token, self._auth_mode)
             headers = {
-                "Authorization": f"Bearer {used_token}",
+                "Authorization": self._auth_header(),
                 "User-Agent": USER_AGENT,
                 "Content-Type": "application/json",
             }
@@ -175,7 +289,7 @@ class MoenFloApi:
                 raise MoenFloError(f"Connection error on {path}: {err}") from err
 
             if status in (401, 403) and attempt == 1:
-                await self._force_refresh(used_token)
+                await self._force_refresh(used)
                 continue
             text = raw.decode(errors="replace")
             if status in (401, 403):

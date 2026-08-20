@@ -26,5 +26,11 @@
       "already_configured": "This Moen account is already configured.",
       "reauth_successful": "Re-authentication was successful."
     }
+  },
+  "issues": {
+    "using_legacy_auth": {
+      "title": "Moen Flo is using the legacy login",
+      "description": "Moen SSO sign-in failed, so this integration fell back to the legacy Flo login. Everything still works, but the legacy endpoint is the one Moen is most likely to retire, and the fallback exists only as a backstop.\n\nIt retries SSO on every token renewal, so this clears by itself if SSO comes back. If it persists, check the Home Assistant log for the reason the SSO login failed."
+    }
   }
 }
