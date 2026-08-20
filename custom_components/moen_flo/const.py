@@ -6,11 +6,13 @@ from datetime import timedelta
 
 DOMAIN = "moen_flo"
 
-# Moen SSO (Cognito) auth — the token that api-gw.meetflo.com/v2 accepts.
+# Moen SSO (Cognito) auth — the flow the current Moen Smartwater app uses.
+# Observed from the app, not documented, so both values can change without notice.
 OAUTH_URL = "https://4j1gkf0vji.execute-api.us-east-2.amazonaws.com/prod/v1/oauth2/token"
 OAUTH_CLIENT_ID = "6qn9pep31dglq6ed4fvlq6rp5t"
 
-# Legacy Flo data/control plane (still live; now Moen-SSO-authed).
+# Flo data/control plane. Accepts EITHER the SSO access token or a legacy v1
+# users/auth token (re-verified 2026-08-19); this client sends the SSO one.
 API_GW = "https://api-gw.meetflo.com/api/v2"
 
 USER_AGENT = "Smartwater-iOS-prod-3.45.0"

@@ -1,8 +1,15 @@
 """Async client for the Flo shutoff valve over Moen SSO auth.
 
-api-gw.meetflo.com/v2 now requires the Moen Cognito access token (client
-6qn9pep31dglq6ed4fvlq6rp5t), NOT the legacy Flo v1 users/auth token. This client
-logs in via oauth2/token, refreshes on expiry/401, and drives the valve + mode.
+This client logs in via Moen's Cognito oauth2/token endpoint (client
+6qn9pep31dglq6ed4fvlq6rp5t), refreshes on expiry/401, and drives the valve + mode.
+That is the auth the current Moen Smartwater app uses.
+
+⚠ It is NOT true that api-gw.meetflo.com/v2 requires the Cognito token. That was
+written here on 2026-07-16 and re-tested on 2026-08-19: the legacy Flo v1
+users/auth token is still accepted by api-gw — 200 on /api/v2/users/{id} and
+/api/v2/devices/{id}. Whether Moen changed something or the credential state
+differed in July is unknown. SSO is used here because it is the current app's
+flow and is the one likely to outlive v1, not because v1 is broken.
 """
 
 from __future__ import annotations
