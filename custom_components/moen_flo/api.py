@@ -5,7 +5,7 @@ This client logs in via Moen's Cognito oauth2/token endpoint (client
 That is the auth the current Moen Smartwater app uses.
 
 ⚠ It is NOT true that api-gw.meetflo.com/v2 requires the Cognito token. That was
-written here on 2026-07-16 and re-tested on 2026-08-19: the legacy Flo v1
+written here on 2026-07-16 and re-tested on 2026-08-20: the legacy Flo v1
 users/auth token is still accepted by api-gw — 200 on /api/v2/users/{id} and
 /api/v2/devices/{id}. Whether Moen changed something or the credential state
 differed in July is unknown. SSO is used here because it is the current app's
