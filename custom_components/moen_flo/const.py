@@ -31,12 +31,14 @@ AUTH_MODE_LEGACY = "legacy"
 ISSUE_LEGACY_AUTH = "using_legacy_auth"
 LEGACY_AUTH_ISSUE_AFTER = 3
 
-# Flo data/control plane. GETs accept EITHER auth, but the HEADER FORM DIFFERS and
-# is not interchangeable (measured 2026-08-20 on GET /api/v2/users/{id}):
+# Flo data/control plane. Accepts EITHER auth, but the HEADER FORM DIFFERS and is
+# not interchangeable (measured 2026-08-20 on GET /api/v2/users/{id}):
 #     SSO access token   -> "Authorization: Bearer <tok>"   200
 #     legacy v1 token    -> "Authorization: <tok>"          200
 #     legacy v1 as Bearer                                   401
-# Writes were NOT tested with a legacy token. This client sends the SSO one.
+# Writes work on the legacy token too: a close/open cycle over the fallback path was
+# accepted and the device reported closed then open (2026-08-20). That is the device's
+# reported state, not a physically observed one. This client sends the SSO token.
 API_GW = "https://api-gw.meetflo.com/api/v2"
 
 USER_AGENT = "Smartwater-iOS-prod-3.45.0"
