@@ -87,7 +87,6 @@ class MoenFloApi:
                     "password": self._password,
                     "client_id": OAUTH_CLIENT_ID,
                 },
-                auth=False,
                 timeout=SSO_LOGIN_TIMEOUT,
             )
             # Inside the try on purpose: a 200 carrying no access token (an OTP
@@ -119,7 +118,6 @@ class MoenFloApi:
         data = await self._raw_post(
             LEGACY_AUTH_URL,
             {"username": self._username, "password": self._password},
-            auth=False,
         )
         self._store_legacy_token(data)
 
@@ -140,7 +138,6 @@ class MoenFloApi:
                     "refresh_token": self._refresh_token,
                     "client_id": OAUTH_CLIENT_ID,
                 },
-                auth=False,
             )
             self._store_token(data)
         except (MoenFloAuthError, MoenFloError):
@@ -249,11 +246,15 @@ class MoenFloApi:
 
     # ---- HTTP ------------------------------------------------------------- #
     async def _raw_post(
-        self, url: str, body: dict, *, auth: bool, timeout: int | None = None
+        self, url: str, body: dict, *, timeout: int | None = None
     ) -> dict[str, Any]:
+        """POST to an auth endpoint. Never sends an Authorization header.
+
+        Only the SSO and legacy token endpoints go through here, and neither takes
+        one -- the SSO endpoint 401s on a stale bearer. Authenticated calls go via
+        _api(), which sets the header per auth mode.
+        """
         headers = {"Content-Type": "application/json;charset=UTF-8", "User-Agent": USER_AGENT}
-        if auth:
-            headers["Authorization"] = self._auth_header()
         try:
             async with asyncio.timeout(timeout or REQUEST_TIMEOUT):
                 resp = await self._session.post(url, json=body, headers=headers)
