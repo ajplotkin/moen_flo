@@ -34,8 +34,8 @@ class MoenFloSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any], dict[str, Any]], Any]
 
 
-def _telemetry(device: dict[str, Any]) -> dict[str, Any]:
-    return ((device.get("telemetry") or {}).get("current") or {})
+from .telemetry import telemetry as _telemetry  # noqa: E402
+from .telemetry import water_temp_f as _water_temp_f  # noqa: E402
 
 
 SENSORS: tuple[MoenFloSensorDescription, ...] = (
@@ -63,8 +63,14 @@ SENSORS: tuple[MoenFloSensorDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,  # reads oddly at zero-flow
-        value_fn=lambda dev, data: _telemetry(dev).get("tempF"),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        # Not a raw passthrough: valves with no temperature sensor report a constant
+        # placeholder (225 F on the unit this was written against) rather than omitting
+        # the field. See telemetry.water_temp_f -- readings at or above boiling are
+        # returned as None so the entity goes unavailable instead of publishing a fake
+        # number. The old comment here said it "reads oddly at zero-flow"; that was
+        # wrong -- it read 225 while flow was 2.16 gal/min.
+        value_fn=lambda dev, data: _water_temp_f(dev),
     ),
     MoenFloSensorDescription(
         key="wifi",

@@ -20,7 +20,7 @@ def _load():
     pkg = types.ModuleType("moen_flo_std")
     pkg.__path__ = [str(COMPONENT)]
     sys.modules["moen_flo_std"] = pkg
-    for name in ("const", "api"):
+    for name in ("const", "api", "telemetry"):
         spec = importlib.util.spec_from_file_location(
             f"moen_flo_std.{name}", COMPONENT / f"{name}.py"
         )
@@ -28,6 +28,11 @@ def _load():
         sys.modules[f"moen_flo_std.{name}"] = mod
         spec.loader.exec_module(mod)
     return sys.modules["moen_flo_std.api"], sys.modules["moen_flo_std.const"]
+
+
+def load_telemetry():
+    """The HA-free telemetry helpers, loaded standalone like api/const."""
+    return sys.modules["moen_flo_std.telemetry"]
 
 
 api_mod, const_mod = _load()
