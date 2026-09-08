@@ -76,6 +76,12 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # treats as an unexpected error -- endless retries and no reauth prompt.
             if self.device_id is None:
                 await self._async_setup()
+            # Announce a watcher BEFORE reading, so the live telemetry stream is running by
+            # the time we fetch. Without this psi/gpm freeze indefinitely -- the backend only
+            # populates telemetry.current while a client is subscribed. Best-effort: it
+            # returns False rather than raising, and a stale reading is then suppressed by
+            # telemetry.fresh_telemetry instead of being published as if it were current.
+            await self.api.async_report_presence()
             device = await self.api.async_get_device(self.device_id)
         except MoenFloAuthError as err:
             # Stored password no longer works -> prompt the user to re-auth.

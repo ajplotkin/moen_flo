@@ -402,6 +402,33 @@ class MoenFloApi:
         except MoenFloError:
             return None
 
+    async def async_report_presence(self) -> bool:
+        """Tell Moen a client is watching, which starts the live telemetry stream.
+
+        THIS IS WHAT MAKES psi/gpm WORK. `telemetry.current` is a live-stream cache that the
+        backend only populates while a client is subscribed -- it is what the phone and web
+        apps do, and without it the field freezes indefinitely (measured: 17.7 days stale
+        while water was used nightly).
+
+        Proven 2026-09-08 with the confound removed: telemetry was allowed to decay to 432 s
+        stale with no app open anywhere, then this single POST -- empty body -- brought it
+        back within 16 seconds, after which it advanced every ~15 s for the rest of the run.
+
+        Found by reading the Flo web app's JS bundle, which calls /api/v2/presence/me. An
+        earlier version of this test ran while a browser tab was open and "passed" for the
+        wrong reason; the stream was already awake. Freshness must be established BEFORE the
+        POST for the result to mean anything.
+
+        Best-effort by design: a failure here must never fail the coordinator update. The
+        readings simply go stale, and fresh_telemetry() then reports them as unavailable
+        rather than publishing a fossil.
+        """
+        try:
+            await self._api("POST", "/presence/me", {})
+        except MoenFloError:
+            return False
+        return True
+
     # ---- writes ----------------------------------------------------------- #
     async def async_set_valve(self, device_id: str, target: str) -> None:
         if target not in (VALVE_OPEN, VALVE_CLOSED):

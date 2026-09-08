@@ -34,8 +34,25 @@ class MoenFloSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any], dict[str, Any]], Any]
 
 
+from .telemetry import fresh_telemetry as _fresh  # noqa: E402
 from .telemetry import latest_metric as _latest_metric  # noqa: E402
 from .telemetry import water_temp_f as _water_temp_f  # noqa: E402
+
+
+def _live_or_hourly(dev, data, live_key, metric_key):
+    """Instantaneous reading when the stream is running, else the hourly average.
+
+    Two genuinely different sources, deliberately not silently interchangeable: the live
+    value is a spot reading refreshed every ~15 s while the presence beacon holds the stream
+    open; the fallback is an hourly mean. The fallback exists so a beacon failure degrades to
+    a coarser real number instead of a gap -- and because /water/metrics keeps updating even
+    when nothing is subscribed. Neither path can return the frozen snapshot: fresh_telemetry
+    fails closed on a stale or unparsable timestamp.
+    """
+    value = _fresh(dev).get(live_key)
+    if isinstance(value, (int, float)):
+        return value
+    return _latest_metric(data.get("metrics"), metric_key)
 
 
 SENSORS: tuple[MoenFloSensorDescription, ...] = (
@@ -46,11 +63,9 @@ SENSORS: tuple[MoenFloSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfVolumeFlowRate.GALLONS_PER_MINUTE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=2,
-        # Hourly average from /water/metrics, NOT telemetry.current.gpm. The instantaneous
-        # field only updates while someone has the Moen app open -- it sat frozen at one
-        # value for ten days while water was used nightly. This is an average, but it is
-        # real and it keeps updating unattended. See telemetry.latest_metric.
-        value_fn=lambda dev, data: _latest_metric(data.get("metrics"), "averageGpm"),
+        # Live ~15 s reading, held open by the coordinator's presence beacon; falls back to
+        # the hourly average if that stream ever stops. See _live_or_hourly.
+        value_fn=lambda dev, data: _live_or_hourly(dev, data, "gpm", "averageGpm"),
     ),
     MoenFloSensorDescription(
         key="pressure",
@@ -59,8 +74,8 @@ SENSORS: tuple[MoenFloSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPressure.PSI,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
-        # Hourly average -- same reasoning as Water flow above.
-        value_fn=lambda dev, data: _latest_metric(data.get("metrics"), "averagePsi"),
+        # Live reading with hourly fallback -- same as Water flow above.
+        value_fn=lambda dev, data: _live_or_hourly(dev, data, "psi", "averagePsi"),
     ),
     MoenFloSensorDescription(
         key="temperature",

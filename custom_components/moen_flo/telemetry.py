@@ -6,6 +6,7 @@ the same way `api` and `const` are (see tests/conftest.py).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 # Water in a domestic supply line cannot reach boiling at atmospheric pressure, so any
@@ -80,3 +81,43 @@ def latest_metric(payload: dict[str, Any] | None, key: str) -> float | None:
         if best_time is None or when > best_time:
             best_time, best_value = when, float(value)
     return best_value
+
+# `telemetry.current` only advances while a client is subscribed. The coordinator posts
+# /presence/me on every poll to hold that stream open (see api.async_report_presence), so a
+# reading older than a few poll cycles means the beacon stopped working -- NOT that the water
+# is quiet. Six cycles of the 30 s interval is generous enough to ride out a transient failure
+# while still being three orders of magnitude away from the 17.7-day fossil this replaced.
+TELEMETRY_MAX_AGE_S = 180.0
+
+
+def telemetry_age_s(device: dict[str, Any], now: datetime | None = None) -> float | None:
+    """Seconds since the telemetry snapshot was written, or None if unknown/unparsable."""
+    updated = telemetry(device).get("updated")
+    if not isinstance(updated, str):
+        return None
+    try:
+        # The API emits a trailing Z, which fromisoformat rejects before Python 3.11.
+        stamp = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return ((now or datetime.now(timezone.utc)) - stamp).total_seconds()
+
+
+def fresh_telemetry(
+    device: dict[str, Any],
+    max_age_s: float = TELEMETRY_MAX_AGE_S,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """The telemetry block if it is recent enough to trust, else an empty dict.
+
+    An unknown or unparsable age counts as stale. Failing closed matters here: the whole bug
+    this guards against was a stale block that looked exactly like a live reading, and a
+    missing timestamp gives no evidence of freshness.
+    """
+    age = telemetry_age_s(device, now)
+    if age is None or age > max_age_s or age < -max_age_s:
+        return {}
+    return telemetry(device)
+
