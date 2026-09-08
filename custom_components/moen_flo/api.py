@@ -377,6 +377,31 @@ class MoenFloApi:
             total = sum(i.get("gallonsConsumed", 0) for i in items) or None
         return round(total, 1) if isinstance(total, (int, float)) else None
 
+    async def async_get_metrics(
+        self, mac_address: str, start_iso: str, end_iso: str, tz: str
+    ) -> dict[str, Any] | None:
+        """Hourly average pressure/flow buckets. Best-effort, like consumption.
+
+        This is the ONLY continuously-updating source for psi and gpm. `telemetry.current`
+        on the device payload is a live-stream cache that Moen populates only while a client
+        is watching -- see telemetry.latest_metric for the measurements behind that.
+
+        `interval` accepts 1h, 1d and 1m (month) only; 5m/15m/PT1M/raw are all rejected with
+        "Invalid property values", so one hour is the finest granularity available.
+
+        Note the response keys are `averagePsi` / `averageGpm`, NOT `psi` / `gpm`. Searching
+        the payload for the short names finds nothing and makes the endpoint look empty --
+        which is exactly why this endpoint went unnoticed while the frozen values shipped.
+        """
+        path = (
+            f"/water/metrics?macAddress={mac_address}&startDate={start_iso}"
+            f"&endDate={end_iso}&interval=1h&tz={tz}"
+        )
+        try:
+            return await self._api("GET", path)
+        except MoenFloError:
+            return None
+
     # ---- writes ----------------------------------------------------------- #
     async def async_set_valve(self, device_id: str, target: str) -> None:
         if target not in (VALVE_OPEN, VALVE_CLOSED):

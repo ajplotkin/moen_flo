@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import logging
 from typing import Any
 
@@ -82,6 +84,7 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(str(err)) from err
 
         consumption = None
+        metrics = None
         if self.mac_address:
             now_local = dt_util.now()
             start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -95,12 +98,24 @@ class MoenFloCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                 tz_name,
             )
+            # Six hours back, not since midnight: only the newest bucket is used, and a
+            # short window keeps the response small while still covering a gap in
+            # reporting. Just after the hour the current bucket can be empty, so there
+            # has to be at least one older one to fall back to.
+            metrics_start = end_utc - timedelta(hours=6)
+            metrics = await self.api.async_get_metrics(
+                self.mac_address,
+                metrics_start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                tz_name,
+            )
 
         self._check_auth_mode()
 
         return {
             "device": device,
             "consumption_today": consumption,
+            "metrics": metrics,
             "static": {**self._static, "deviceModel": device.get("deviceModel", self._static.get("deviceModel")),
                        "fwVersion": device.get("fwVersion", self._static.get("fwVersion"))},
         }

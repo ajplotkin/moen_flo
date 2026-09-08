@@ -63,3 +63,66 @@ def test_telemetry_helper_still_returns_the_current_block():
     """Other sensors (flow, pressure) depend on this and must be unaffected."""
     assert tel.telemetry(_dev(68)) == {"tempF": 68}
     assert tel.telemetry({}) == {}
+
+
+# --------------------------------------------------------------------------- #
+# latest_metric -- /water/metrics hourly buckets
+#
+# These exist because the instantaneous psi/gpm fields are unusable: measured
+# 2026-09-08, telemetry.current only advances while the Moen app is open and
+# froze four minutes after it closed, having previously served a value 17.7 days
+# old while water was used nightly.
+# --------------------------------------------------------------------------- #
+
+def _payload(*items):
+    return {"items": list(items)}
+
+
+def test_latest_metric_picks_the_newest_bucket():
+    # Deliberately NOT in chronological order: a first-element or last-element
+    # implementation passes an ordered fixture without ever comparing timestamps.
+    p = _payload(
+        {"time": "2026-09-08T01:00:00-04:00", "averagePsi": 40.0},
+        {"time": "2026-09-08T03:00:00-04:00", "averagePsi": 48.7},
+        {"time": "2026-09-08T02:00:00-04:00", "averagePsi": 44.4},
+    )
+    assert tel.latest_metric(p, "averagePsi") == 48.7
+
+
+def test_latest_metric_skips_null_current_hour():
+    # Just after the hour the newest bucket exists but has no sample yet; falling
+    # back to the previous hour is the whole point.
+    p = _payload(
+        {"time": "2026-09-08T02:00:00-04:00", "averagePsi": 44.4},
+        {"time": "2026-09-08T03:00:00-04:00", "averagePsi": None},
+    )
+    assert tel.latest_metric(p, "averagePsi") == 44.4
+
+
+def test_latest_metric_reads_the_requested_key_only():
+    p = _payload({"time": "2026-09-08T03:00:00-04:00", "averagePsi": 48.7, "averageGpm": 0.166})
+    assert tel.latest_metric(p, "averageGpm") == 0.166
+
+
+def test_latest_metric_empty_and_missing():
+    assert tel.latest_metric(None, "averagePsi") is None
+    assert tel.latest_metric({}, "averagePsi") is None
+    assert tel.latest_metric(_payload(), "averagePsi") is None
+    assert tel.latest_metric(_payload({"time": "x"}), "averagePsi") is None
+
+
+def test_latest_metric_ignores_malformed_rows():
+    p = _payload(
+        "not a dict",
+        {"averagePsi": 99.0},                                    # no time
+        {"time": 12345, "averagePsi": 98.0},                     # non-str time
+        {"time": "2026-09-08T01:00:00-04:00", "averagePsi": "48.7"},  # string value
+        {"time": "2026-09-08T02:00:00-04:00", "averagePsi": 44.4},
+    )
+    assert tel.latest_metric(p, "averagePsi") == 44.4
+
+
+def test_latest_metric_returns_float_for_int_input():
+    p = _payload({"time": "2026-09-08T03:00:00-04:00", "averagePsi": 48})
+    v = tel.latest_metric(p, "averagePsi")
+    assert v == 48.0 and isinstance(v, float)

@@ -34,7 +34,7 @@ class MoenFloSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any], dict[str, Any]], Any]
 
 
-from .telemetry import telemetry as _telemetry  # noqa: E402
+from .telemetry import latest_metric as _latest_metric  # noqa: E402
 from .telemetry import water_temp_f as _water_temp_f  # noqa: E402
 
 
@@ -46,7 +46,11 @@ SENSORS: tuple[MoenFloSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfVolumeFlowRate.GALLONS_PER_MINUTE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=2,
-        value_fn=lambda dev, data: _telemetry(dev).get("gpm"),
+        # Hourly average from /water/metrics, NOT telemetry.current.gpm. The instantaneous
+        # field only updates while someone has the Moen app open -- it sat frozen at one
+        # value for ten days while water was used nightly. This is an average, but it is
+        # real and it keeps updating unattended. See telemetry.latest_metric.
+        value_fn=lambda dev, data: _latest_metric(data.get("metrics"), "averageGpm"),
     ),
     MoenFloSensorDescription(
         key="pressure",
@@ -55,7 +59,8 @@ SENSORS: tuple[MoenFloSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPressure.PSI,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
-        value_fn=lambda dev, data: _telemetry(dev).get("psi"),
+        # Hourly average -- same reasoning as Water flow above.
+        value_fn=lambda dev, data: _latest_metric(data.get("metrics"), "averagePsi"),
     ),
     MoenFloSensorDescription(
         key="temperature",
